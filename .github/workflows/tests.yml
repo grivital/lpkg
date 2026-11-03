@@ -37,12 +37,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make install DESTDIR="$PWD/_stage" PREFIX=/usr
-          SITE="python${{ matrix.python-version }}"
-          PYTHONPATH="$PWD/_stage/usr/lib/$SITE/site-packages" \
-            "$PWD/_stage/usr/bin/lpkg" --version
-          make uninstall DESTDIR="$PWD/_stage" PREFIX=/usr
-          test ! -e "$PWD/_stage/usr/bin/lpkg"
+          make install DESTDIR="$PWD/_stage" PREFIX=/opt
+          "$PWD/_stage/opt/bin/lpkg" --version
+          "$PWD/_stage/opt/bin/lpkg" --help >/dev/null
+          make uninstall DESTDIR="$PWD/_stage" PREFIX=/opt
+          test ! -e "$PWD/_stage/opt/bin/lpkg"
 
   package:
     name: Сборка sdist

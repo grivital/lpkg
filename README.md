@@ -62,10 +62,24 @@ emerge app-admin/lpkg
 
 ```bash
 cd /var/db/repos/ваш-оверлей/app-admin/lpkg
-ebuild lpkg-0.1.0.ebuild manifest
+ebuild lpkg-0.1.1.ebuild manifest
 ```
 
 Подробности — в разделе [«Установка через Portage»](#установка-через-portage-1).
+
+### Через Makefile
+
+По умолчанию установка идёт в `/opt`:
+
+```bash
+make install                 # /opt/bin/lpkg, /opt/lib/pythonX.Y/site-packages/lpkg
+make install PREFIX="$HOME/.local"
+make uninstall
+```
+
+Для `/opt` нужны права на запись. Скрипт `lpkg` при запуске сам добавляет
+`<prefix>/lib/pythonX.Y/site-packages` в `sys.path`, поэтому `PYTHONPATH` и
+другие переменные окружения не требуются.
 
 ### Через pip или uv
 
@@ -298,7 +312,9 @@ make clean
 ```
 
 `make install` не требует `pip`, `build` и сетевого доступа: копирует модули,
-`py.typed` и генерирует `/usr/bin/lpkg` из `scripts/lpkg.in`.
+`py.typed` и генерирует `<prefix>/bin/lpkg` из `scripts/lpkg.in`. Скрипт
+вычисляет `site-packages` относительно своего расположения, поэтому префикс
+`/opt` работает без дополнительных переменных окружения.
 
 ### Ebuild
 

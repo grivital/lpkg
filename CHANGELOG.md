@@ -3,6 +3,16 @@
 Все заметные изменения проекта. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.1.1] — 2026-11-03
+
+### Исправлено
+
+- `lpkg`, установленный в нестандартный префикс (`/opt`), запускается без
+  `PYTHONPATH`: консольный скрипт сам добавляет
+  `<prefix>/lib/pythonX.Y/site-packages` в `sys.path`.
+- Smoke-тест CI теперь устанавливает пакет в `/opt` и проверяет автономный
+  запуск.
+
 ## [0.1.0] — 2026-11-03
 
 Первая рабочая версия.
@@ -23,4 +33,5 @@
 - Makefile с поддержкой `DESTDIR` для установки через Portage.
 - 36 модульных тестов без внешних зависимостей.
 
+[0.1.1]: https://github.com/grivital/lpkg/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/grivital/lpkg/releases/tag/v0.1.0
