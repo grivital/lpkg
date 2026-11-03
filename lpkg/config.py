@@ -51,49 +51,49 @@ class Config:
     network_timeout: float = 300.0
     color: str = "auto"  # auto | always | never
     pip_python: str = "python3"
-    include_manual: bool = True
+    include_manual: bool = False
     path: Path | None = None
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "Config":
         target = Path(path) if path is not None else config_path()
         config = cls(path=target)
-        if not target.exists():
-            return config
         try:
+            if not target.exists():
+                return config
             with target.open("rb") as handle:
                 data = tomllib.load(handle)
         except (OSError, tomllib.TOMLDecodeError) as exc:
             raise ConfigError(f"не удалось прочитать {target}: {exc}") from exc
 
-        general = data.get("general", {})
-        if isinstance(general, dict):
-            config.color = str(general.get("color", config.color))
-            config.timeout = float(general.get("timeout", config.timeout))
-            config.update_timeout = float(
-                general.get("update_timeout", config.update_timeout)
-            )
-            config.network_timeout = float(
-                general.get("network_timeout", config.network_timeout)
-            )
-            config.pip_python = str(general.get("pip_python", config.pip_python))
-            config.include_manual = bool(
-                general.get("include_manual", config.include_manual)
-            )
+        general = _section(data, "general")
+        config.color = _string(general, "color", config.color)
+        if config.color not in ("auto", "always", "never"):
+            raise ConfigError("general.color должен быть auto, always или never")
+        config.timeout = _timeout(general, "timeout", config.timeout)
+        config.update_timeout = _timeout(
+            general, "update_timeout", config.update_timeout
+        )
+        config.network_timeout = _timeout(
+            general, "network_timeout", config.network_timeout
+        )
+        config.pip_python = _string(general, "pip_python", config.pip_python)
+        if not config.pip_python.strip():
+            raise ConfigError("general.pip_python не должен быть пустым")
+        config.include_manual = _boolean(
+            general, "include_manual", config.include_manual
+        )
 
-        managers = data.get("managers", {})
-        if isinstance(managers, dict):
-            for key, value in managers.items():
-                if key in config.managers:
-                    config.managers[key] = bool(value)
+        managers = _section(data, "managers")
+        for key, value in managers.items():
+            if key in config.managers:
+                if not isinstance(value, bool):
+                    raise ConfigError(f"managers.{key} должен быть булевым")
+                config.managers[key] = value
 
-        scan = data.get("scan", {})
-        if isinstance(scan, dict):
-            if "bin_dirs" in scan:
-                config.bin_dirs = [str(item) for item in scan["bin_dirs"]]
-            if "extra_dirs" in scan:
-                config.extra_dirs = [str(item) for item in scan["extra_dirs"]]
-
+        scan = _section(data, "scan")
+        config.bin_dirs = _string_list(scan, "bin_dirs", config.bin_dirs)
+        config.extra_dirs = _string_list(scan, "extra_dirs", config.extra_dirs)
         return config
 
     # ------------------------------------------------------------------ пути
@@ -116,3 +116,43 @@ class Config:
 
     def resolved_extra_dirs(self) -> list[Path]:
         return [p for p in (home_path(raw) for raw in self.extra_dirs) if p.is_dir()]
+
+
+def _section(data: dict, key: str) -> dict:
+    value = data.get(key, {})
+    if not isinstance(value, dict):
+        raise ConfigError(f"{key} должен быть таблицей TOML")
+    return value
+
+
+def _string(section: dict, key: str, default: str) -> str:
+    value = section.get(key, default)
+    if not isinstance(value, str):
+        raise ConfigError(f"general.{key} должен быть строкой")
+    return value
+
+
+def _boolean(section: dict, key: str, default: bool) -> bool:
+    value = section.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"general.{key} должен быть булевым")
+    return value
+
+
+def _timeout(section: dict, key: str, default: float) -> float:
+    from math import isfinite
+
+    value = section.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"general.{key} должен быть числом")
+    result = float(value)
+    if not isfinite(result) or result <= 0:
+        raise ConfigError(f"general.{key} должен быть положительным конечным числом")
+    return result
+
+
+def _string_list(section: dict, key: str, default: list[str]) -> list[str]:
+    value = section.get(key, default)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ConfigError(f"scan.{key} должен быть массивом строк")
+    return list(value)

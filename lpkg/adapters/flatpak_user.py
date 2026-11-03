@@ -74,26 +74,30 @@ class FlatpakUserAdapter(Adapter):
             ["flatpak", "remote-ls", "--user", "--updates", "--json"],
             timeout=self.config.network_timeout,
         )
-        if not result.ok or not result.out.strip():
-            return records
-        try:
-            payload = json.loads(result.out)
-        except json.JSONDecodeError:
-            return records
+        if not result.ok:
+            raise RuntimeError(result.tail() or "flatpak remote-ls завершился с ошибкой")
+        if not result.out.strip():
+            payload = []
+        else:
+            try:
+                payload = json.loads(result.out)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"не удалось разобрать JSON от flatpak: {exc}") from exc
+        if not isinstance(payload, list):
+            raise RuntimeError("flatpak remote-ls вернул JSON неожиданной структуры")
         latest: dict[str, str] = {}
-        if isinstance(payload, list):
-            for item in payload:
-                if not isinstance(item, dict):
-                    continue
-                app_id = item.get("application") or item.get("name")
-                version = item.get("version")
-                if app_id and version:
-                    latest[str(app_id)] = str(version)
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            app_id = item.get("application") or item.get("name")
+            version = item.get("version")
+            if app_id and version:
+                latest[str(app_id)] = str(version)
         for record in records:
             if record.name in latest:
-                record.latest = latest[record.name]
+                record.set_latest(latest[record.name])
             elif record.version is not None:
-                record.latest = record.version
+                record.set_latest(record.version)
         return records
 
     # ----------------------------------------------------------------- команды

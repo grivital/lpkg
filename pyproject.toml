@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lpkg"
-version = "0.1.1"
+version = "0.1.2"
 description = "Единый менеджер для пакетов, установленных в домашний каталог (uv, cargo, npm, gem, pip --user, go, flatpak --user)"
 readme = "README.md"
 requires-python = ">=3.11"

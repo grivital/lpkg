@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .adapters.go import parse_go_version_m
 from .model import Issue, PackageRecord
-from .proc import home_path, is_elf, is_executable
+from .proc import home_path, is_elf, is_executable, which
 
 #: Подкаталоги, по которым угадывается владелец симлинка.
 _OWNER_HINTS: list[tuple[str, str]] = [
@@ -195,6 +195,8 @@ def _inspect_regular(
 def _go_buildinfo(binary: Path) -> tuple[str, str | None] | None:
     import subprocess
 
+    if which("go") is None:
+        return None
     try:
         completed = subprocess.run(
             ["go", "version", "-m", str(binary)],

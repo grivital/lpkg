@@ -191,6 +191,9 @@ class Adapter(ABC):
 
     # -------------------------------------------------------------- внутреннее
 
+    def execution_env(self) -> dict[str, str] | None:
+        return None
+
     def _execute(
         self,
         command: list[str],
@@ -215,7 +218,9 @@ class Adapter(ABC):
             )
         if on_progress:
             on_progress(f"$ {shlex.join(command)}")
-        result = self.run_command(command, timeout=self.config.update_timeout)
+        result = self.run_command(
+            command, timeout=self.config.update_timeout, env=self.execution_env()
+        )
         message = "ok" if result.ok else (result.tail() or result.error or "ошибка")
         return ActionResult(
             manager=self.id,

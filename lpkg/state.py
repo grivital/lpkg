@@ -39,6 +39,7 @@ class Snapshot:
     taken_at: datetime | None = None
     first_seen: dict[str, str] = field(default_factory=dict)
     packages: dict[str, dict[str, Any]] = field(default_factory=dict)
+    error: str | None = None
 
     @classmethod
     def empty(cls) -> "Snapshot":
@@ -47,40 +48,63 @@ class Snapshot:
 
 def load_snapshot() -> Snapshot:
     path = snapshot_path()
-    if not path.exists():
-        return Snapshot.empty()
     try:
+        if not path.exists():
+            return Snapshot.empty()
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return Snapshot.empty()
+    except (OSError, json.JSONDecodeError) as exc:
+        return Snapshot(error=f"не удалось прочитать {path}: {exc}")
     if not isinstance(data, dict):
-        return Snapshot.empty()
+        return Snapshot(error=f"неверная структура {path}")
+    errors: list[str] = []
     taken_at = None
     raw_taken = data.get("taken_at")
     if isinstance(raw_taken, str):
         try:
             taken_at = datetime.fromisoformat(raw_taken)
         except ValueError:
-            taken_at = None
+            errors.append("неверное taken_at")
+    raw_first_seen = data.get("first_seen") or {}
+    if not isinstance(raw_first_seen, dict):
+        errors.append("first_seen должен быть объектом")
+        raw_first_seen = {}
+    raw_packages = data.get("packages") or {}
+    if not isinstance(raw_packages, dict):
+        errors.append("packages должен быть объектом")
+        raw_packages = {}
     first_seen = {
-        str(k): str(v)
-        for k, v in (data.get("first_seen") or {}).items()
+        k: v for k, v in raw_first_seen.items()
         if isinstance(k, str) and isinstance(v, str)
     }
     packages = {
-        str(k): v
-        for k, v in (data.get("packages") or {}).items()
+        k: v for k, v in raw_packages.items()
         if isinstance(k, str) and isinstance(v, dict)
     }
-    return Snapshot(taken_at=taken_at, first_seen=first_seen, packages=packages)
+    error = "; ".join(errors) if errors else None
+    return Snapshot(
+        taken_at=taken_at,
+        first_seen=first_seen,
+        packages=packages,
+        error=error,
+    )
 
 
-def save_snapshot(records: Iterable[PackageRecord], snapshot: Snapshot) -> Snapshot:
+def save_snapshot(
+    records: Iterable[PackageRecord],
+    snapshot: Snapshot,
+    *,
+    preserve_managers: Iterable[str] = (),
+) -> Snapshot:
     now = datetime.now().astimezone()
-    packages: dict[str, dict[str, Any]] = {}
+    preserved = set(preserve_managers)
+    packages = {
+        key: value
+        for key, value in snapshot.packages.items()
+        if value.get("manager") in preserved
+    }
     first_seen = dict(snapshot.first_seen)
-    stamp = iso(now)
+    stamp = now.isoformat(timespec="seconds")
     for record in records:
         if record.is_manual:
             continue
@@ -205,8 +229,9 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
             json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
         os.replace(temp_name, path)
-    except OSError:
+    except BaseException:
         try:
             os.unlink(temp_name)
         except OSError:
             pass
+        raise

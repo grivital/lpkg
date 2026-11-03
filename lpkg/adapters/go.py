@@ -12,25 +12,40 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-from ..model import ActionResult, PackageRecord
+from ..model import ActionResult, PackageRecord, version_is_newer
 from ..proc import home_path, is_elf, is_executable
 from .base import Adapter, ProgressCallback
 
+_GO_PATH_LINE = re.compile(r"^\s*path\t(?P<path>[^\t]+)")
 _GO_MODULE_LINE = re.compile(r"^\s*mod\t(?P<module>[^\t]+)\t(?P<version>[^\t]*)")
+
+
+def parse_go_buildinfo(text: str) -> tuple[str, str, str | None] | None:
+    """Извлекает путь устанавливаемого пакета, модуль и версию."""
+    package = None
+    module = None
+    version = None
+    for line in text.splitlines():
+        path_match = _GO_PATH_LINE.match(line)
+        if path_match is not None:
+            package = path_match.group("path").strip()
+        module_match = _GO_MODULE_LINE.match(line)
+        if module_match is not None:
+            module = module_match.group("module").strip()
+            version = module_match.group("version").strip() or None
+    if module is None:
+        return None
+    if package is None:
+        package = module
+    if version in ("(devel)", ""):
+        version = None
+    return package, module, version
 
 
 def parse_go_version_m(text: str) -> tuple[str, str | None] | None:
     """Из вывода ``go version -m`` берёт (module path, version)."""
-    for line in text.splitlines():
-        match = _GO_MODULE_LINE.match(line)
-        if not match:
-            continue
-        module = match.group("module").strip()
-        version = match.group("version").strip() or None
-        if version in ("(devel)", ""):
-            version = None
-        return module, version
-    return None
+    info = parse_go_buildinfo(text)
+    return (info[1], info[2]) if info is not None else None
 
 
 class GoAdapter(Adapter):
@@ -52,7 +67,7 @@ class GoAdapter(Adapter):
         self._memo["gobin"] = path
         return path
 
-    def _buildinfo(self, binary: Path) -> tuple[str, str | None] | None:
+    def _buildinfo(self, binary: Path) -> tuple[str, str, str | None] | None:
         if not is_elf(binary):
             return None
         result = self.run_command(
@@ -60,7 +75,7 @@ class GoAdapter(Adapter):
         )
         if not result.ok:
             return None
-        return parse_go_version_m(result.out)
+        return parse_go_buildinfo(result.out)
 
     def list(self) -> list[PackageRecord]:
         gobin = self.gobin()
@@ -75,7 +90,7 @@ class GoAdapter(Adapter):
             info = self._buildinfo(binary)
             if info is None:
                 continue
-            module, version = info
+            package, module, version = info
             record = PackageRecord(
                 manager="go",
                 name=binary.name,
@@ -83,7 +98,7 @@ class GoAdapter(Adapter):
                 install_path=str(binary),
                 bin_paths=[str(binary)],
                 source=module,
-                extra={"module": module},
+                extra={"module": module, "package": package},
             )
             try:
                 record.installed_at = datetime.fromtimestamp(binary.stat().st_mtime)
@@ -100,6 +115,7 @@ class GoAdapter(Adapter):
 
     def check_outdated(self, records: list[PackageRecord]) -> list[PackageRecord]:
         targets = [r for r in records if r.extra.get("module")]
+        errors: list[str] = []
 
         def query(record: PackageRecord) -> None:
             module = str(record.extra["module"])
@@ -108,21 +124,29 @@ class GoAdapter(Adapter):
                 timeout=self.config.network_timeout,
             )
             if not result.ok:
+                errors.append(f"{module}: {result.tail()}")
                 return
             try:
                 import json
 
                 payload = json.loads(result.out)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                errors.append(f"{module}: неверный JSON: {exc}")
                 return
             version = payload.get("Version") if isinstance(payload, dict) else None
-            if version:
-                record.latest = str(version)
+            if not version:
+                errors.append(f"{module}: ответ не содержит Version")
+                return
+            record.latest = str(version)
+            if record.version is not None:
+                record.update_available = version_is_newer(record.latest, record.version)
 
         if not targets:
             return records
         with ThreadPoolExecutor(max_workers=min(4, len(targets))) as pool:
             list(pool.map(query, targets))
+        if errors:
+            raise RuntimeError("; ".join(errors))
         return records
 
     # ----------------------------------------------------------------- команды
@@ -130,18 +154,23 @@ class GoAdapter(Adapter):
     def update_command(
         self, record: PackageRecord, *, latest: bool = False
     ) -> list[str] | None:
-        module = record.extra.get("module")
-        if not module:
+        package = record.extra.get("package") or record.extra.get("module")
+        if not package:
             return None
-        return ["go", "install", f"{module}@latest"]
+        return ["go", "install", f"{package}@latest"]
 
     def update_many_command(
         self, records, *, latest: bool = False
     ) -> list[str] | None:
-        modules = [str(r.extra["module"]) for r in records if r.extra.get("module")]
-        if len(modules) != len(records):
+        packages = [
+            str(r.extra.get("package") or r.extra.get("module"))
+            for r in records
+            if r.extra.get("package") or r.extra.get("module")
+        ]
+        if len(packages) != len(records):
             return None
-        return ["go", "install", *(f"{module}@latest" for module in modules)]
+        packages = list(dict.fromkeys(packages))
+        return ["go", "install", *(f"{package}@latest" for package in packages)]
 
     def install_command(self, spec: str) -> list[str] | None:
         return ["go", "install", spec]

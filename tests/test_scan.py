@@ -4,7 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from lpkg.config import Config
 from lpkg.model import PackageRecord
+from lpkg.registry import _bin_dirs
 from lpkg.scan import scan_bin_dirs
 
 
@@ -89,6 +91,17 @@ class ScanTests(unittest.TestCase):
         outcome = scan_bin_dirs([], [first, second], path_env="")
         codes = [issue.code for issue in outcome.issues]
         self.assertIn("duplicate-bin", codes)
+
+    def test_duplicate_config_dirs_are_scanned_once(self):
+        self._script(self.root, "tool")
+        config = Config(bin_dirs=[str(self.root)], extra_dirs=[str(self.root)])
+        dirs = _bin_dirs(config, [])
+        self.assertEqual(dirs, [self.root])
+        outcome = scan_bin_dirs([], dirs, path_env="")
+        self.assertEqual(len(outcome.manual), 1)
+        self.assertNotIn(
+            "duplicate-bin", [issue.code for issue in outcome.issues]
+        )
 
     def test_stale_receipt_reported(self):
         receipt_dir = self.root / ".config" / "uv"

@@ -62,7 +62,7 @@ emerge app-admin/lpkg
 
 ```bash
 cd /var/db/repos/ваш-оверлей/app-admin/lpkg
-ebuild lpkg-0.1.1.ebuild manifest
+ebuild lpkg-0.1.2.ebuild manifest
 ```
 
 Подробности — в разделе [«Установка через Portage»](#установка-через-portage-1).
@@ -173,6 +173,9 @@ lpkg tui               # интерактивный интерфейс на dial
 Общие флаги: `--config PATH`, `--color auto|always|never`, `-v`.
 У всех команд, кроме `tui`, есть `--json` (`export` всегда выводит JSON).
 
+Если хотя бы одного менеджера не удалось опросить, команда возвращает код 1.
+При `--json` в stdout остаётся только валидный JSON, диагностика идёт в stderr.
+
 ## Как это работает
 
 ### Идентификация пакета
@@ -241,7 +244,11 @@ extra_dirs = ["~/opt/bin"]
 [general]
 pip_python = "python3"   # интерпретатор для pip --user
 network_timeout = 300
+include_manual = false   # показывать ручные записи в list по умолчанию
 ```
+
+`include_manual` влияет только на `list` и `tui`: команды `info`, `uninstall`
+и `update` всегда видят пакеты, установленные вручную.
 
 ## Архитектура
 
@@ -356,7 +363,7 @@ src_install() {
 ## Разработка
 
 ```bash
-python -m unittest discover -s tests -v    # 36 тестов
+python -m unittest discover -s tests -v    # 78 тестов
 make check                                 # проверка синтаксиса
 make help                                  # список целей
 ```

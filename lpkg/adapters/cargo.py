@@ -9,7 +9,7 @@ import tomllib
 from datetime import datetime
 from pathlib import Path
 
-from ..model import Issue, PackageRecord
+from ..model import Issue, PackageRecord, version_is_newer
 from ..proc import home_path, which
 from .base import Adapter
 
@@ -139,13 +139,20 @@ class CargoAdapter(Adapter):
             ["cargo", "install-update", "-l"],
             timeout=self.config.network_timeout,
         )
-        if not result.ok:
-            return records
         latest = parse_install_update(result.out)
+        # cargo-update может завершиться с ненулевым кодом, но всё равно
+        # напечатать таблицу. Ошибкой считаем только отсутствие разобранных
+        # данных, а не сам код возврата.
+        if not result.ok and not latest:
+            raise RuntimeError(
+                result.tail() or "cargo install-update -l завершился с ошибкой"
+            )
         for record in records:
             new_version = latest.get(record.name)
             if new_version is not None:
                 record.latest = new_version
+                if record.version is not None:
+                    record.update_available = version_is_newer(new_version, record.version)
         return records
 
     def issues(self, records: list[PackageRecord]) -> list[Issue]:

@@ -127,17 +127,17 @@ class PipUserAdapter(Adapter):
             timeout=self.config.network_timeout,
         )
         if not result.ok:
-            return records
+            raise RuntimeError(result.tail() or "pip list --outdated завершился с ошибкой")
         try:
             payload = json.loads(result.out or "[]")
-        except json.JSONDecodeError:
-            return records
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"не удалось разобрать JSON от pip: {exc}") from exc
         latest = parse_pip_outdated(payload)
         for record in records:
             if record.name in latest:
-                record.latest = latest[record.name]
+                record.set_latest(latest[record.name])
             elif record.version is not None:
-                record.latest = record.version
+                record.set_latest(record.version)
         return records
 
     # ----------------------------------------------------------------- команды

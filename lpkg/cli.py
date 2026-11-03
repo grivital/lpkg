@@ -163,8 +163,10 @@ class Context:
     def json(self) -> bool:
         return bool(getattr(self.args, "json", False))
 
-    def collect(self, *, check_updates: bool = False, include_manual: bool = True) -> ScanResult:
-        if getattr(self.args, "verbose", False) and not self.json:
+    def collect(
+        self, *, check_updates: bool = False, include_manual: bool | None = None
+    ) -> ScanResult:
+        if getattr(self.args, "verbose", False):
             for adapter in self.adapters.values():
                 if adapter.is_available():
                     print(f"{PROGRAM}: {adapter.id}: доступен", file=sys.stderr)
@@ -179,16 +181,22 @@ class Context:
             include_manual=include_manual,
             adapters=self.adapters.values(),
         )
-        if not self.json:
-            for error in result.errors:
-                print(
-                    self.style(f"{PROGRAM}: {error.manager}: {error.message}", "red"),
-                    file=sys.stderr,
-                )
+        for error in result.errors:
+            print(
+                self.style(f"{PROGRAM}: {error.manager}: {error.message}", "red"),
+                file=sys.stderr,
+            )
+        for issue in result.issues:
+            if issue.code == "state-error":
+                print(self.style(f"{PROGRAM}: {issue.message}", "red"), file=sys.stderr)
         return result
 
     def save(self, result: ScanResult) -> None:
-        result.snapshot = save_snapshot(result.records, result.snapshot)
+        failed = {error.manager for error in result.errors}
+        failed.update(error.manager for error in result.unavailable)
+        result.snapshot = save_snapshot(
+            result.records, result.snapshot, preserve_managers=failed
+        )
 
     def record_history(self, result: ActionResult) -> None:
         append_history(result.to_dict())
@@ -296,46 +304,65 @@ def cmd_list(ctx: Context) -> int:
     args = ctx.args
     # Список устаревших без проверки версий не имеет смысла.
     check = args.check or args.outdated
-    result = ctx.collect(check_updates=check)
+    show_manual = args.all or ctx.config.include_manual
+    result = ctx.collect(
+        check_updates=check, include_manual=show_manual or args.manual
+    )
     records = result.records
     if args.manual:
         records = [r for r in records if r.is_manual]
-    elif not args.all:
+    elif not show_manual:
         records = [r for r in records if not r.is_manual]
     records = filter_by_managers(records, args.manager)
     if args.outdated:
         records = [r for r in records if r.outdated]
     ctx.save(result)
 
+    status = 1 if result.errors else 0
     if ctx.json:
         print(json.dumps(_record_payload(records), ensure_ascii=False, indent=2))
-        return 0
+        return status
     if not records:
         print("Ничего не найдено.")
-        return 0
+        return status
     print_records(records, style=ctx.style, show_paths=args.paths)
     _print_summary(result, style=ctx.style)
-    return 0
+    return status
 
 
 def cmd_outdated(ctx: Context) -> int:
-    result = ctx.collect(check_updates=True)
-    records = [r for r in filter_by_managers(result.records, ctx.args.manager) if r.outdated]
+    result = ctx.collect(check_updates=True, include_manual=False)
+    filtered = filter_by_managers(result.records, ctx.args.manager)
+    records = [r for r in filtered if r.outdated]
     ctx.save(result)
+    status = 1 if result.errors else 0
     if ctx.json:
         print(json.dumps(_record_payload(records), ensure_ascii=False, indent=2))
-        return 0
-    if not records:
-        print(ctx.style("Всё актуально.", "green"))
-        return 0
-    print_records(records, style=ctx.style)
+        return status
     unknown = [
-        r
-        for r in result.managers_records
-        if r.outdated is None and r.latest is None
+        r for r in filtered if not r.is_manual and r.outdated is None
     ]
-    print()
-    print(f"Устарело: {len(records)}.")
+    if not records:
+        if result.errors:
+            print(ctx.style("Не удалось проверить обновления.", "red"))
+        elif not filtered:
+            print(ctx.style("Нет пакетов для проверки.", "yellow"))
+        elif unknown:
+            print(ctx.style("Обновлений не найдено, но проверены не все пакеты.", "yellow"))
+        else:
+            print(ctx.style("Всё актуально.", "green"))
+    else:
+        print_records(records, style=ctx.style)
+        print()
+        print(f"Устарело: {len(records)}.")
+    if result.unavailable:
+        print(
+            ctx.style(
+                "Недоступны менеджеры: "
+                + ", ".join(error.manager for error in result.unavailable),
+                "dim",
+            )
+        )
     if unknown:
         print(
             ctx.style(
@@ -346,7 +373,7 @@ def cmd_outdated(ctx: Context) -> int:
                 "dim",
             )
         )
-    return 0
+    return status
 
 
 def cmd_update(ctx: Context) -> int:
@@ -355,7 +382,7 @@ def cmd_update(ctx: Context) -> int:
         print(f"{PROGRAM}: укажите пакеты или --all", file=sys.stderr)
         return 2
 
-    result = ctx.collect(check_updates=True)
+    result = ctx.collect(check_updates=True, include_manual=True)
     records = result.records
     if args.all:
         targets = [
@@ -409,13 +436,20 @@ def cmd_update(ctx: Context) -> int:
             return 2
 
     if not targets:
-        print("Нечего обновлять.")
-        return 0
+        if ctx.json:
+            print("[]")
+        else:
+            print("Нечего обновлять.")
+        return 1 if result.errors else 0
 
     if not args.dry_run:
-        _print_update_plan(targets, ctx.style, latest=args.latest)
+        if not ctx.json:
+            _print_update_plan(targets, ctx.style, latest=args.latest)
         if not confirm("Продолжить обновление?", assume_yes=args.yes):
-            print("Отменено.")
+            if ctx.json:
+                print("[]")
+            else:
+                print("Отменено.")
             return 1
     elif not ctx.json:
         _print_update_plan(targets, ctx.style, latest=args.latest)
@@ -453,7 +487,8 @@ def cmd_update(ctx: Context) -> int:
             ctx.record_history(action_result)
     if not args.dry_run:
         ctx.save(ctx.collect(check_updates=False))
-    return print_action_results(results, style=ctx.style, json_output=ctx.json)
+    status = print_action_results(results, style=ctx.style, json_output=ctx.json)
+    return 1 if result.errors else status
 
 
 def cmd_install(ctx: Context) -> int:
@@ -485,7 +520,7 @@ def cmd_install(ctx: Context) -> int:
 
 def cmd_uninstall(ctx: Context) -> int:
     args = ctx.args
-    scan = ctx.collect(check_updates=False)
+    scan = ctx.collect(check_updates=False, include_manual=True)
     targets, problems = resolve_targets(args.targets, scan.records)
     if problems:
         for problem in problems:
@@ -501,13 +536,20 @@ def cmd_uninstall(ctx: Context) -> int:
             )
         return 2
     if not targets:
-        print("Нечего удалять.")
+        if ctx.json:
+            print("[]")
+        else:
+            print("Нечего удалять.")
         return 0
     if not args.dry_run:
-        for record in targets:
-            print(f"  {record.key} {record.version or ''}")
+        if not ctx.json:
+            for record in targets:
+                print(f"  {record.key} {record.version or ''}")
         if not confirm("Удалить перечисленные пакеты?", assume_yes=args.yes):
-            print("Отменено.")
+            if ctx.json:
+                print("[]")
+            else:
+                print("Отменено.")
             return 1
 
     results: list[ActionResult] = []
@@ -528,16 +570,16 @@ def cmd_uninstall(ctx: Context) -> int:
             )
             continue
         results.extend(adapter.uninstall(manager_records, dry_run=args.dry_run))
-    for action_result in results:
-        ctx.record_history(action_result)
     if not args.dry_run:
+        for action_result in results:
+            ctx.record_history(action_result)
         ctx.save(ctx.collect(check_updates=False))
     return print_action_results(results, style=ctx.style, json_output=ctx.json)
 
 
 def cmd_info(ctx: Context) -> int:
     args = ctx.args
-    result = ctx.collect(check_updates=args.check)
+    result = ctx.collect(check_updates=args.check, include_manual=True)
     targets, problems = resolve_targets(args.targets, result.records)
     if problems:
         for problem in problems:
@@ -703,6 +745,8 @@ def _print_summary(result: ScanResult, *, style: Style) -> None:
         parts.append(f"вручную: {manual}")
     if outdated:
         parts.append(style(f"устарело: {outdated}", "yellow"))
+    if result.unavailable:
+        parts.append(f"недоступно менеджеров: {len(result.unavailable)}")
     if result.errors:
         parts.append(style(f"ошибок опроса: {len(result.errors)}", "red"))
     print()
@@ -721,6 +765,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nПрервано.", file=sys.stderr)
         return 130
+    except OSError as exc:
+        print(f"{PROGRAM}: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

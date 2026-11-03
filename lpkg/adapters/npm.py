@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from ..model import PackageRecord
+from ..model import Issue, PackageRecord
 from ..proc import home_path
 from .base import Adapter
 
@@ -77,6 +77,10 @@ def _is_within(path: Path, parent: Path) -> bool:
         return False
 
 
+def _is_user_path(path: Path) -> bool:
+    return _is_within(path, Path.home())
+
+
 class NpmAdapter(Adapter):
     id = "npm"
     label = "npm"
@@ -116,6 +120,8 @@ class NpmAdapter(Adapter):
         seen: set[str] = set()
         result: list[Path] = []
         for path in candidates:
+            if not _is_user_path(path):
+                continue
             try:
                 key = str(path.resolve())
             except OSError:
@@ -131,6 +137,8 @@ class NpmAdapter(Adapter):
 
     def list(self) -> list[PackageRecord]:
         prefix = self.prefix()
+        if not _is_user_path(prefix):
+            return []
         root = self.root_g()
         bin_links = _bin_links(prefix / "bin")
         records: list[PackageRecord] = []
@@ -204,29 +212,55 @@ class NpmAdapter(Adapter):
             timeout=self.config.network_timeout,
         )
         # Код 1 — это нормально, когда есть устаревшие пакеты.
+        if not result.ok and result.code != 1:
+            raise RuntimeError(result.tail() or "npm outdated завершился с ошибкой")
         payload: dict = {}
         if result.out.strip():
             try:
                 parsed = json.loads(result.out)
-                if isinstance(parsed, dict):
-                    payload = parsed
-            except json.JSONDecodeError:
-                payload = {}
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"не удалось разобрать JSON от npm: {exc}") from exc
+            if not isinstance(parsed, dict):
+                raise RuntimeError("npm outdated вернул JSON неожиданной структуры")
+            payload = parsed
+        elif result.code == 1:
+            raise RuntimeError("npm outdated завершился с ошибкой без списка обновлений")
+        if payload.get("error"):
+            raise RuntimeError(str(payload["error"]))
         for record in records:
             info = payload.get(record.name)
             if isinstance(info, dict) and info.get("latest"):
-                record.latest = str(info["latest"])
+                record.set_latest(str(info["latest"]))
             elif record.has_errors:
                 record.latest = None
             elif record.version is not None:
-                record.latest = record.version
+                record.set_latest(record.version)
         return records
+
+    def issues(self, records: list[PackageRecord]) -> list[Issue]:
+        prefix = self.prefix()
+        if _is_user_path(prefix):
+            return []
+        return [
+            Issue(
+                code="npm-system-prefix",
+                message=(
+                    f"npm prefix {prefix} находится вне $HOME: пакеты npm не "
+                    "сканируются, установка, обновление и удаление отключены"
+                ),
+                severity="warning",
+                manager="npm",
+                path=str(prefix),
+            )
+        ]
 
     # ----------------------------------------------------------------- команды
 
     def update_command(
         self, record: PackageRecord, *, latest: bool = False
     ) -> list[str] | None:
+        if not _is_user_path(self.prefix()):
+            return None
         if any(w.code == "npm-hidden" for w in record.warnings):
             return None
         if latest:
@@ -241,9 +275,13 @@ class NpmAdapter(Adapter):
         return ["npm", "update", "-g", record.name, "--no-fund", "--no-audit"]
 
     def install_command(self, spec: str) -> list[str] | None:
+        if not _is_user_path(self.prefix()):
+            return None
         return ["npm", "install", "-g", spec, "--no-fund", "--no-audit"]
 
     def uninstall_command(self, record: PackageRecord) -> list[str] | None:
+        if not _is_user_path(self.prefix()):
+            return None
         if any(w.code == "npm-hidden" for w in record.warnings):
             return None
         return ["npm", "uninstall", "-g", record.name, "--no-fund", "--no-audit"]

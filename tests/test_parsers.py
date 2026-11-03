@@ -4,10 +4,11 @@ import unittest
 from lpkg.adapters.cargo import parse_crates2, parse_install_update
 from lpkg.adapters.flatpak_user import parse_flatpak_list
 from lpkg.adapters.gem import parse_gem_list, parse_gem_outdated
-from lpkg.adapters.go import parse_go_version_m
+from lpkg.adapters.go import GoAdapter, parse_go_buildinfo, parse_go_version_m
 from lpkg.adapters.npm import iter_packages
 from lpkg.adapters.pip_user import parse_pip_list, parse_pip_outdated
 from lpkg.adapters.uv_tool import parse_uv_tool_list
+from lpkg.model import PackageRecord
 
 import tempfile
 from pathlib import Path
@@ -113,6 +114,22 @@ class GoParserTests(unittest.TestCase):
         )
         self.assertEqual(
             parse_go_version_m(text), ("github.com/cli/cli/v2", "v2.103.2")
+        )
+        self.assertEqual(
+            parse_go_buildinfo(text),
+            ("github.com/cli/cli/v2/cmd/gh", "github.com/cli/cli/v2", "v2.103.2"),
+        )
+        record = PackageRecord(
+            manager="go",
+            name="gh",
+            extra={
+                "package": "github.com/cli/cli/v2/cmd/gh",
+                "module": "github.com/cli/cli/v2",
+            },
+        )
+        self.assertEqual(
+            GoAdapter().update_command(record),
+            ["go", "install", "github.com/cli/cli/v2/cmd/gh@latest"],
         )
 
     def test_devel_version(self):

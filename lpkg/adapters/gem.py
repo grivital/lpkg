@@ -127,16 +127,19 @@ class GemAdapter(Adapter):
             ["gem", "outdated"], timeout=self.config.network_timeout, env=self._gem_env()
         )
         if not result.ok:
-            return records
+            raise RuntimeError(result.tail() or "gem outdated завершился с ошибкой")
         latest = parse_gem_outdated(result.out)
         for record in records:
             if record.name in latest:
-                record.latest = latest[record.name]
+                record.set_latest(latest[record.name])
             elif record.version is not None:
-                record.latest = record.version
+                record.set_latest(record.version)
         return records
 
     # ----------------------------------------------------------------- команды
+
+    def execution_env(self) -> dict[str, str]:
+        return self._gem_env()
 
     def update_command(
         self, record: PackageRecord, *, latest: bool = False

@@ -100,7 +100,7 @@ class UvToolAdapter(Adapter):
             timeout=self.config.network_timeout,
         )
         if not result.ok:
-            return records
+            raise RuntimeError(result.tail() or "uv tool list --outdated завершился с ошибкой")
         latest_map = {
             record.name: record.latest
             for record in parse_uv_tool_list(result.out)
@@ -110,9 +110,9 @@ class UvToolAdapter(Adapter):
         # в нём нет, считается актуальным.
         for record in records:
             if record.name in latest_map:
-                record.latest = latest_map[record.name]
+                record.set_latest(latest_map[record.name])
             elif record.version is not None:
-                record.latest = record.version
+                record.set_latest(record.version)
         return records
 
     def update_command(

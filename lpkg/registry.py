@@ -27,6 +27,7 @@ class ManagerError:
 class ScanResult:
     records: list[PackageRecord] = field(default_factory=list)
     errors: list[ManagerError] = field(default_factory=list)
+    unavailable: list[ManagerError] = field(default_factory=list)
     issues: list[Issue] = field(default_factory=list)
     snapshot: Snapshot = field(default_factory=Snapshot.empty)
     scanned_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
@@ -97,12 +98,16 @@ def collect(
 
     available = [a for a in (adapters if adapters is not None else build_adapters(config))]
     result = ScanResult(snapshot=snapshot)
+    if snapshot.error:
+        result.issues.append(
+            Issue(code="state-error", message=snapshot.error, severity="error")
+        )
     records: list[PackageRecord] = []
 
     def load(adapter: Adapter) -> tuple[Adapter, list[PackageRecord], str | None]:
-        if not adapter.is_available():
-            return adapter, [], adapter.unavailable_reason()
         try:
+            if not adapter.is_available():
+                return adapter, [], adapter.unavailable_reason()
             return adapter, adapter.list(), None
         except Exception as exc:  # адаптер не должен ронять весь скан
             return adapter, [], f"{type(exc).__name__}: {exc}"
@@ -113,7 +118,10 @@ def collect(
     loaded_adapters: list[Adapter] = []
     for adapter, adapter_records, error in loaded:
         if error is not None:
-            result.errors.append(ManagerError(adapter.id, error))
+            target = (
+                result.errors if adapter.is_available() else result.unavailable
+            )
+            target.append(ManagerError(adapter.id, error))
             continue
         loaded_adapters.append(adapter)
         records.extend(adapter_records)
@@ -149,13 +157,16 @@ def collect(
         outcome = scan_bin_dirs(result.records, bin_dirs)
         result.records.extend(outcome.manual)
         result.issues.extend(outcome.issues)
-        for adapter in loaded_adapters:
-            try:
-                result.issues.extend(
-                    adapter.issues([r for r in records if r.manager == adapter.id])
-                )
-            except Exception:
-                pass
+
+    # Проблемы самих менеджеров (например, npm с prefix вне $HOME) не зависят
+    # от того, сканируем ли мы каталоги вручную.
+    for adapter in loaded_adapters:
+        try:
+            result.issues.extend(
+                adapter.issues([r for r in records if r.manager == adapter.id])
+            )
+        except Exception:
+            pass
 
     result.records = sort_records(result.records)
     return result
@@ -163,19 +174,24 @@ def collect(
 
 def _bin_dirs(config: Config, records: list[PackageRecord]):
     """Каталоги из конфига + каталоги, где менеджеры реально держат бинари."""
-    paths = config.resolved_bin_dirs()
-    seen = {str(p.resolve()) for p in paths}
+    candidates = config.resolved_bin_dirs()
     for record in records:
         for raw in record.bin_paths:
             parent = _safe_parent(raw)
-            if parent is None:
-                continue
-            key = str(parent.resolve())
-            if key in seen:
-                continue
-            seen.add(key)
-            paths.append(parent)
-    paths.extend(config.resolved_extra_dirs())
+            if parent is not None:
+                candidates.append(parent)
+    candidates.extend(config.resolved_extra_dirs())
+    paths = []
+    seen: set[str] = set()
+    for path in candidates:
+        try:
+            key = str(path.resolve())
+        except OSError:
+            key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        paths.append(path)
     return paths
 
 

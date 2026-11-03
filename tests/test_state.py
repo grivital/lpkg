@@ -9,6 +9,7 @@ from lpkg.state import (
     diff_snapshot,
     load_snapshot,
     read_history,
+    Snapshot,
     save_snapshot,
 )
 
@@ -51,6 +52,30 @@ class StateTests(unittest.TestCase):
             load_snapshot(),
         )
         self.assertEqual(second.first_seen["uv:x"], original)
+
+    def test_failed_manager_is_preserved(self):
+        snapshot = Snapshot(
+            packages={
+                "uv:x": {"manager": "uv", "name": "x", "version": "1.0"},
+                "npm:y": {"manager": "npm", "name": "y", "version": "1.0"},
+            }
+        )
+        saved = save_snapshot(
+            [PackageRecord(manager="uv", name="x", version="1.1")],
+            snapshot,
+            preserve_managers={"npm"},
+        )
+        self.assertEqual(saved.packages["uv:x"]["version"], "1.1")
+        self.assertIn("npm:y", saved.packages)
+
+    def test_malformed_snapshot_reports_error(self):
+        from lpkg.state import snapshot_path
+
+        snapshot_path().parent.mkdir(parents=True)
+        snapshot_path().write_text('{"first_seen": ["bad"]}', encoding="utf-8")
+        snapshot = load_snapshot()
+        self.assertIsNotNone(snapshot.error)
+        self.assertEqual(snapshot.first_seen, {})
 
     def test_diff(self):
         records = [

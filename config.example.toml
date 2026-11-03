@@ -13,7 +13,8 @@ network_timeout = 300
 # Интерпретатор, чьи pip --user пакеты показывать.
 pip_python = "python3"
 # Показывать ли установленное вручную в list по умолчанию.
-include_manual = true
+# info, uninstall и update видят ручные записи всегда.
+include_manual = false
 
 [managers]
 uv = true

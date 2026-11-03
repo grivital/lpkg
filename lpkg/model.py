@@ -83,6 +83,7 @@ class PackageRecord:
     name: str
     version: str | None = None
     latest: str | None = None
+    update_available: bool | None = None
     installed_at: datetime | None = None
     install_path: str | None = None
     bin_paths: list[str] = field(default_factory=list)
@@ -107,7 +108,27 @@ class PackageRecord:
         """``True``/``False``, если известна последняя версия, иначе ``None``."""
         if self.latest is None or self.version is None:
             return None
-        return not versions_equal(self.version, self.latest)
+        if self.update_available is not None:
+            return self.update_available
+        newer = version_is_newer(self.latest, self.version)
+        if newer is not None:
+            return newer
+        # Неоднозначные форматы не угадываем: лучше «неизвестно», чем
+        # ложное «устарел».
+        return None
+
+    def set_latest(self, latest: str, *, fallback: bool = True) -> None:
+        """Проставляет ``latest`` и выводит статус обновления.
+
+        ``fallback`` используется, когда версии не удаётся сравнить: менеджер
+        уже сказал, что пакет требует обновления.
+        """
+        self.latest = latest
+        if self.version is None:
+            self.update_available = None
+            return
+        newer = version_is_newer(latest, self.version)
+        self.update_available = fallback if newer is None else newer
 
     @property
     def is_manual(self) -> bool:
@@ -126,6 +147,7 @@ class PackageRecord:
             "name": self.name,
             "version": self.version,
             "latest": self.latest,
+            "update_available": self.update_available,
             "outdated": self.outdated,
             "installed_at": iso(self.installed_at),
             "install_path": self.install_path,
@@ -174,6 +196,13 @@ class ActionResult:
 
 _VERSION_SPLIT = re.compile(r"[.+\-]")
 _LEADING_NUM = re.compile(r"(\d+)")
+_CORE_RE = re.compile(r"^(?P<core>\d+(?:\.\d+)*)(?P<rest>.*)$", re.DOTALL)
+_IDENT_RE = re.compile(r"[A-Za-z]+|\d+")
+
+#: Стадии версии: предрелиз < стабильная < пострелиз.
+_STAGE_PRE = 0
+_STAGE_STABLE = 1
+_STAGE_POST = 2
 
 
 def normalize_version(version: str) -> str:
@@ -202,17 +231,88 @@ def version_key(version: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
+def parse_version(
+    version: str,
+) -> tuple[tuple[int, ...], int, tuple[str, ...]] | None:
+    """Разбирает версию на (числовое ядро, стадия, идентификаторы).
+
+    Понимает semver (``1.2.3-alpha.1``), PEP 440-подобные суффиксы
+    (``1.0rc1``, ``1.0.post1``) и отбрасывает build-метаданные после ``+``.
+    Возвращает ``None`` для форматов, которые не удаётся сравнить.
+    """
+    value = normalize_version(version)
+    base = value.split("+", 1)[0].strip()
+    match = _CORE_RE.match(base)
+    if match is None:
+        return None
+
+    core = tuple(int(part) for part in match.group("core").split("."))
+    while core and core[-1] == 0:
+        core = core[:-1]
+
+    rest = match.group("rest").strip()
+    if not rest:
+        return core, _STAGE_STABLE, ()
+
+    lowered = rest.lower().lstrip(".-")
+    if lowered.startswith("post"):
+        tail = lowered[len("post"):].strip(".-")
+        return core, _STAGE_POST, ("post", *_IDENT_RE.findall(tail))
+
+    identifiers = tuple(_IDENT_RE.findall(lowered))
+    if not identifiers:
+        return None
+    return core, _STAGE_PRE, identifiers
+
+
+def _compare_identifiers(left: tuple[str, ...], right: tuple[str, ...]) -> int:
+    """Semver-подобное сравнение идентификаторов prerelease."""
+    for left_id, right_id in zip(left, right):
+        if left_id == right_id:
+            continue
+        left_num = left_id.isdigit()
+        right_num = right_id.isdigit()
+        if left_num and right_num:
+            return (int(left_id) > int(right_id)) - (int(left_id) < int(right_id))
+        if left_num:
+            return -1
+        if right_num:
+            return 1
+        return (left_id > right_id) - (left_id < right_id)
+    return (len(left) > len(right)) - (len(left) < len(right))
+
+
+def _compare_parsed(
+    left: tuple[tuple[int, ...], int, tuple[str, ...]],
+    right: tuple[tuple[int, ...], int, tuple[str, ...]],
+) -> int:
+    if left[0] != right[0]:
+        return (left[0] > right[0]) - (left[0] < right[0])
+    if left[1] != right[1]:
+        return (left[1] > right[1]) - (left[1] < right[1])
+    return _compare_identifiers(left[2], right[2])
+
+
 def versions_equal(left: str, right: str) -> bool:
-    """Семантическое равенство версий с запасным строковым сравнением."""
+    """Семантическое равенство: без build-метаданных и хвостовых нулей."""
     left_norm = normalize_version(left)
     right_norm = normalize_version(right)
     if left_norm == right_norm:
         return True
-    left_key = version_key(left_norm)
-    right_key = version_key(right_norm)
-    if left_key and right_key:
-        return left_key == right_key
-    return False
+    left_parsed = parse_version(left_norm)
+    right_parsed = parse_version(right_norm)
+    if left_parsed is None or right_parsed is None:
+        return False
+    return _compare_parsed(left_parsed, right_parsed) == 0
+
+
+def version_is_newer(candidate: str, current: str) -> bool | None:
+    """``True``/``False``, если версии сравнимы; иначе ``None``."""
+    candidate_parsed = parse_version(candidate)
+    current_parsed = parse_version(current)
+    if candidate_parsed is None or current_parsed is None:
+        return None
+    return _compare_parsed(candidate_parsed, current_parsed) > 0
 
 
 def version_sort_key(version: str) -> tuple[tuple[int, ...], str]:
@@ -220,10 +320,19 @@ def version_sort_key(version: str) -> tuple[tuple[int, ...], str]:
 
 
 def max_version(versions: Iterable[str]) -> str | None:
-    items = [v for v in versions if v]
-    if not items:
-        return None
-    return max(items, key=version_sort_key)
+    result: str | None = None
+    for version in versions:
+        if not version:
+            continue
+        if result is None:
+            result = version
+            continue
+        newer = version_is_newer(version, result)
+        if newer is True:
+            result = version
+        elif newer is None and normalize_version(version) > normalize_version(result):
+            result = version
+    return result
 
 
 # --------------------------------------------------------------------- время

@@ -267,6 +267,11 @@ def _package_menu(ctx, record: PackageRecord) -> None:
                     "Запустите lpkg doctor для подробностей.",
                 )
                 continue
+            if not _yesno(
+                "Обновление",
+                f"Обновить {record.key} {record.version or ''}?",
+            ):
+                continue
             results = _run_update(ctx, [record])
             _textbox("Результат обновления", _results_text(results))
             return
@@ -290,7 +295,7 @@ def _package_menu(ctx, record: PackageRecord) -> None:
 
 def _show_packages(ctx) -> None:
     _infobox("Сбор списка пакетов…")
-    result = ctx.collect(check_updates=False)
+    result = ctx.collect(check_updates=False, include_manual=True)
     records = result.records
     managers = sorted({r.manager for r in records})
     while True:
