@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="person">
+		<email>grivital@yandex.ru</email>
+		<name>Vitaly Grinin</name>
+	</maintainer>
+	<longdescription lang="ru">
+		lpkg собирает в одну картину пакеты, установленные в домашний каталог
+		менеджерами uv tool, cargo, npm, gem, pip --user, go и flatpak --user.
+		Показывает, кем и когда установлен пакет, что устарело, находит
+		установленное вручную, битые ссылки и дубликаты команд, позволяет
+		обновлять всё оптом родными командами менеджеров.
+	</longdescription>
+	<use>
+		<flag name="tui">Установить dev-util/dialog для интерактивного интерфейса lpkg tui.</flag>
+	</use>
+	<upstream>
+		<remote-id type="github">grivital/lpkg</remote-id>
+	</upstream>
+</pkgmetadata>

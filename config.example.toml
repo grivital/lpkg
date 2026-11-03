@@ -1,0 +1,37 @@
+# Пример конфигурации lpkg.
+# Скопируйте в ~/.config/lpkg/config.toml и раскомментируйте нужное.
+
+[general]
+# auto | always | never
+color = "auto"
+# Таймаут обычных операций, секунды.
+timeout = 120
+# Таймаут обновлений: сборка крейтов бывает долгой.
+update_timeout = 3600
+# Таймаут сетевых проверок.
+network_timeout = 300
+# Интерпретатор, чьи pip --user пакеты показывать.
+pip_python = "python3"
+# Показывать ли установленное вручную в list по умолчанию.
+include_manual = true
+
+[managers]
+uv = true
+cargo = true
+npm = true
+gem = true
+pip = true
+go = true
+flatpak = true
+
+[scan]
+# Каталоги, в которых искать бинари и сирот.
+bin_dirs = [
+    "~/.local/bin",
+    "~/bin",
+    "~/.cargo/bin",
+    "~/.npm/bin",
+    "~/go/bin",
+]
+# Дополнительные каталоги только для поиска сирот.
+extra_dirs = []

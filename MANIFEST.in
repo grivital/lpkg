@@ -1,0 +1,7 @@
+include README.md CHANGELOG.md LICENSE Makefile config.example.toml pyrightconfig.json
+recursive-include lpkg *.py py.typed
+recursive-include scripts *.in
+recursive-include tests *.py
+recursive-include contrib *
+recursive-include docs *
+recursive-include .github *

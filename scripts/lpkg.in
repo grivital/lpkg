@@ -1,0 +1,9 @@
+#!@PYTHON@
+"""Консольная точка входа lpkg (генерируется Makefile)."""
+
+import sys
+
+from lpkg.cli import main
+
+if __name__ == "__main__":
+    sys.exit(main())

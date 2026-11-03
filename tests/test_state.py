@@ -1,0 +1,95 @@
+import os
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from lpkg.model import PackageRecord
+from lpkg.state import (
+    apply_first_seen,
+    diff_snapshot,
+    load_snapshot,
+    read_history,
+    save_snapshot,
+)
+
+
+class StateTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"XDG_STATE_HOME": self.tmp.name})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def test_snapshot_roundtrip_and_first_seen(self):
+        records = [
+            PackageRecord(manager="uv", name="debugpy", version="1.8.21"),
+            PackageRecord(manager="cargo", name="b3sum", version="1.8.5"),
+        ]
+        snapshot = load_snapshot()
+        saved = save_snapshot(records, snapshot)
+        self.assertIn("uv:debugpy", saved.first_seen)
+
+        loaded = load_snapshot()
+        self.assertEqual(set(loaded.first_seen), {"uv:debugpy", "cargo:b3sum"})
+        self.assertEqual(loaded.packages["uv:debugpy"]["version"], "1.8.21")
+
+        fresh = PackageRecord(manager="uv", name="debugpy", version="1.8.21")
+        apply_first_seen([fresh], loaded)
+        self.assertIsNotNone(fresh.installed_at)
+
+    def test_first_seen_is_preserved_between_scans(self):
+        first = save_snapshot(
+            [PackageRecord(manager="uv", name="x", version="1.0")],
+            load_snapshot(),
+        )
+        original = first.first_seen["uv:x"]
+        second = save_snapshot(
+            [PackageRecord(manager="uv", name="x", version="1.1")],
+            load_snapshot(),
+        )
+        self.assertEqual(second.first_seen["uv:x"], original)
+
+    def test_diff(self):
+        records = [
+            PackageRecord(manager="uv", name="x", version="1.1"),
+            PackageRecord(manager="npm", name="new", version="2.0"),
+        ]
+        snapshot = load_snapshot()
+        snapshot.packages = {
+            "uv:x": {"manager": "uv", "name": "x", "version": "1.0"},
+            "cargo:gone": {"manager": "cargo", "name": "gone", "version": "0.1"},
+        }
+        snapshot.first_seen = {"uv:x": "2026-01-01T00:00:00"}
+        diff = diff_snapshot(records, snapshot)
+        self.assertEqual([r.key for r in diff.added], ["npm:new"])
+        self.assertEqual([(r.key, old) for r, old in diff.changed], [("uv:x", "1.0")])
+        self.assertEqual([item["key"] for item in diff.removed], ["cargo:gone"])
+        self.assertFalse(diff.empty)
+
+    def test_empty_diff(self):
+        snapshot = load_snapshot()
+        snapshot.packages = {
+            "uv:x": {"manager": "uv", "name": "x", "version": "1.0"}
+        }
+        diff = diff_snapshot(
+            [PackageRecord(manager="uv", name="x", version="1.0")], snapshot
+        )
+        self.assertTrue(diff.empty)
+
+    def test_history(self):
+        from lpkg.state import append_history
+
+        append_history({"manager": "uv", "action": "update", "names": ["x"], "ok": True})
+        append_history({"manager": "cargo", "action": "update", "names": ["y"], "ok": False})
+        entries = read_history(10)
+        self.assertEqual(len(entries), 2)
+        # Новые записи первыми.
+        self.assertEqual(entries[0]["manager"], "cargo")
+        self.assertIn("time", entries[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

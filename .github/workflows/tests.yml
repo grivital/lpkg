@@ -1,0 +1,60 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - name: Получить исходники
+        uses: actions/checkout@v4
+
+      - name: Настроить Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Тесты
+        run: python -m unittest discover -s tests -v
+
+      - name: Проверка синтаксиса
+        run: make check
+
+      - name: Smoke-установка в staging-каталог
+        shell: bash
+        run: |
+          set -euo pipefail
+          make install DESTDIR="$PWD/_stage" PREFIX=/usr
+          SITE="python${{ matrix.python-version }}"
+          PYTHONPATH="$PWD/_stage/usr/lib/$SITE/site-packages" \
+            "$PWD/_stage/usr/bin/lpkg" --version
+          make uninstall DESTDIR="$PWD/_stage" PREFIX=/usr
+          test ! -e "$PWD/_stage/usr/bin/lpkg"
+
+  package:
+    name: Сборка sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade build
+      - run: python -m build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
