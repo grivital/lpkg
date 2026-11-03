@@ -9,11 +9,11 @@
 #
 # Переменные:
 #   PYTHON   интерпретатор (по умолчанию python3 из PATH)
-#   PREFIX   префикс установки (по умолчанию /usr/local)
+#   PREFIX   префикс установки (по умолчанию /opt)
 #   DESTDIR  корень staging-каталога (для Portage)
 
 PYTHON ?= $(shell command -v python3 2>/dev/null || command -v python)
-PREFIX ?= /usr/local
+PREFIX ?= /opt
 DESTDIR ?=
 
 BINDIR  := $(PREFIX)/bin

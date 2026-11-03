@@ -282,7 +282,7 @@ emake DESTDIR="${D}" PREFIX="${EPREFIX}/usr" PYTHON="${PYTHON}" install
 | Переменная | Назначение | По умолчанию |
 |---|---|---|
 | `PYTHON` | интерпретатор Python | `python3` из `PATH` |
-| `PREFIX` | префикс установки | `/usr/local` |
+| `PREFIX` | префикс установки | `/opt` |
 | `DESTDIR` | staging-корень Portage | пусто |
 | `SITELIB` | вычисляется через `sysconfig` | `$(PREFIX)/lib/pythonX.Y/site-packages` |
 
