@@ -3,6 +3,14 @@
 Все заметные изменения проекта. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [0.1.3] — 2026-11-03
+
+### Добавлено
+
+- Кэш последней проверки обновлений в снапшоте: `lpkg ls` и `lpkg info`
+  показывают последнюю известную версию без сетевого запроса и указывают
+  время проверки. Кэш отбрасывается при неизвестном изменении версии.
+
 ## [0.1.2] — 2026-11-03
 
 ### Исправлено
@@ -59,6 +67,7 @@
 - Makefile с поддержкой `DESTDIR` для установки через Portage.
 - 36 модульных тестов без внешних зависимостей.
 
+[0.1.3]: https://github.com/grivital/lpkg/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/grivital/lpkg/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/grivital/lpkg/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/grivital/lpkg/releases/tag/v0.1.0

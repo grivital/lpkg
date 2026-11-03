@@ -11,7 +11,12 @@ from .adapters import ADAPTER_CLASSES, Adapter
 from .config import Config
 from .model import Issue, PackageRecord, sort_records
 from .scan import scan_bin_dirs
-from .state import Snapshot, apply_first_seen, load_snapshot
+from .state import (
+    Snapshot,
+    apply_cached_updates,
+    apply_first_seen,
+    load_snapshot,
+)
 
 
 @dataclass
@@ -31,6 +36,9 @@ class ScanResult:
     issues: list[Issue] = field(default_factory=list)
     snapshot: Snapshot = field(default_factory=Snapshot.empty)
     scanned_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
+    checked_at: datetime | None = None
+    cache_used: bool = False
+    cache_checked_at: datetime | None = None
 
     @property
     def managers_records(self) -> list[PackageRecord]:
@@ -149,6 +157,12 @@ def collect(
             list(pool.map(refresh, pairs))
 
     result.records = records
+
+    if check_updates and not result.errors:
+        result.checked_at = result.scanned_at
+    elif not check_updates and apply_cached_updates(result.records, snapshot):
+        result.cache_used = True
+        result.cache_checked_at = snapshot.checked_at
 
     apply_first_seen(result.records, snapshot)
 

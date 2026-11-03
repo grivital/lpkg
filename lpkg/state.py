@@ -37,6 +37,7 @@ def history_path() -> Path:
 @dataclass
 class Snapshot:
     taken_at: datetime | None = None
+    checked_at: datetime | None = None
     first_seen: dict[str, str] = field(default_factory=dict)
     packages: dict[str, dict[str, Any]] = field(default_factory=dict)
     error: str | None = None
@@ -65,6 +66,13 @@ def load_snapshot() -> Snapshot:
             taken_at = datetime.fromisoformat(raw_taken)
         except ValueError:
             errors.append("неверное taken_at")
+    checked_at = None
+    raw_checked = data.get("checked_at")
+    if isinstance(raw_checked, str):
+        try:
+            checked_at = datetime.fromisoformat(raw_checked)
+        except ValueError:
+            errors.append("неверное checked_at")
     raw_first_seen = data.get("first_seen") or {}
     if not isinstance(raw_first_seen, dict):
         errors.append("first_seen должен быть объектом")
@@ -84,6 +92,7 @@ def load_snapshot() -> Snapshot:
     error = "; ".join(errors) if errors else None
     return Snapshot(
         taken_at=taken_at,
+        checked_at=checked_at,
         first_seen=first_seen,
         packages=packages,
         error=error,
@@ -95,6 +104,7 @@ def save_snapshot(
     snapshot: Snapshot,
     *,
     preserve_managers: Iterable[str] = (),
+    checked_at: datetime | None = None,
 ) -> Snapshot:
     now = datetime.now().astimezone()
     preserved = set(preserve_managers)
@@ -110,19 +120,49 @@ def save_snapshot(
             continue
         key = record.key
         first_seen.setdefault(key, stamp)
+
+        latest = record.latest
+        update_available = record.update_available
+        previous = snapshot.packages.get(key)
+        if latest is None and isinstance(previous, dict):
+            previous_version = previous.get("version")
+            previous_latest = previous.get("latest")
+            if previous_version == record.version and isinstance(
+                previous_latest, str
+            ):
+                # Проверки не было, но версия та же — кэш остаётся валидным.
+                latest = previous_latest
+                previous_update = previous.get("update_available")
+                update_available = (
+                    previous_update if isinstance(previous_update, bool) else None
+                )
+            elif isinstance(previous_latest, str) and previous_latest == record.version:
+                # Пакет обновился до версии, которую мы уже знали.
+                latest = record.version
+                update_available = False
+
         packages[key] = {
             "manager": record.manager,
             "name": record.name,
             "version": record.version,
+            "latest": latest,
+            "update_available": update_available,
             "outdated": record.outdated,
             "install_path": record.install_path,
         }
-    updated = Snapshot(taken_at=now, first_seen=first_seen, packages=packages)
+    effective_checked = checked_at or snapshot.checked_at
+    updated = Snapshot(
+        taken_at=now,
+        checked_at=effective_checked,
+        first_seen=first_seen,
+        packages=packages,
+    )
     _atomic_write_json(
         snapshot_path(),
         {
             "version": 1,
             "taken_at": iso(now),
+            "checked_at": iso(effective_checked),
             "first_seen": first_seen,
             "packages": packages,
         },
@@ -142,6 +182,39 @@ def apply_first_seen(records: Iterable[PackageRecord], snapshot: Snapshot) -> No
             record.installed_at = datetime.fromisoformat(raw)
         except ValueError:
             continue
+
+
+def apply_cached_updates(
+    records: Iterable[PackageRecord], snapshot: Snapshot
+) -> bool:
+    """Применяет последнюю известную проверку к записям без сетевого запроса.
+
+    Возвращает ``True``, если хотя бы одной записи достались кэшированные
+    данные. Кэш применяется только к той же версии пакета или к случаю, когда
+    пакет обновился ровно до известной последней версии.
+    """
+    used = False
+    for record in records:
+        if record.is_manual:
+            continue
+        entry = snapshot.packages.get(record.key)
+        if not isinstance(entry, dict):
+            continue
+        cached_latest = entry.get("latest")
+        if not isinstance(cached_latest, str) or not cached_latest:
+            continue
+        if entry.get("version") == record.version:
+            record.latest = cached_latest
+            cached_update = entry.get("update_available")
+            record.update_available = (
+                cached_update if isinstance(cached_update, bool) else None
+            )
+            used = True
+        elif cached_latest == record.version:
+            record.latest = record.version
+            record.update_available = False
+            used = True
+    return used
 
 
 # ---------------------------------------------------------------------- diff

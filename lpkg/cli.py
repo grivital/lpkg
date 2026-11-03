@@ -195,7 +195,10 @@ class Context:
         failed = {error.manager for error in result.errors}
         failed.update(error.manager for error in result.unavailable)
         result.snapshot = save_snapshot(
-            result.records, result.snapshot, preserve_managers=failed
+            result.records,
+            result.snapshot,
+            preserve_managers=failed,
+            checked_at=result.checked_at,
         )
 
     def record_history(self, result: ActionResult) -> None:
@@ -326,6 +329,22 @@ def cmd_list(ctx: Context) -> int:
         print("Ничего не найдено.")
         return status
     print_records(records, style=ctx.style, show_paths=args.paths)
+    if not check:
+        if result.cache_used:
+            when = (
+                result.cache_checked_at.strftime("%Y-%m-%d %H:%M")
+                if result.cache_checked_at
+                else "время неизвестно"
+            )
+            print(
+                ctx.style(
+                    f"Данные обновлений — по последней проверке: {when}.", "dim"
+                )
+            )
+        else:
+            print(
+                ctx.style("Обновления не проверялись — lpkg ls --check.", "dim")
+            )
     _print_summary(result, style=ctx.style)
     return status
 
@@ -384,6 +403,10 @@ def cmd_update(ctx: Context) -> int:
 
     result = ctx.collect(check_updates=True, include_manual=True)
     records = result.records
+    if not args.dry_run:
+        # Сохраняем результат проверки сразу, чтобы он пережил обновление
+        # и попал в кэш для последующего `lpkg ls`.
+        ctx.save(result)
     if args.all:
         targets = [
             r
@@ -592,6 +615,24 @@ def cmd_info(ctx: Context) -> int:
         if index:
             print()
         print_record_detail(record, style=ctx.style)
+    if not args.check:
+        if result.cache_used:
+            when = (
+                result.cache_checked_at.strftime("%Y-%m-%d %H:%M")
+                if result.cache_checked_at
+                else "время неизвестно"
+            )
+            print(
+                ctx.style(
+                    f"Последняя версия — по последней проверке: {when}.", "dim"
+                )
+            )
+        else:
+            print(
+                ctx.style("Обновления не проверялись — lpkg info <пакет> --check.", "dim")
+            )
+    else:
+        ctx.save(result)
     return 0
 
 

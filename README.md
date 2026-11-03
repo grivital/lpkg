@@ -62,7 +62,7 @@ emerge app-admin/lpkg
 
 ```bash
 cd /var/db/repos/ваш-оверлей/app-admin/lpkg
-ebuild lpkg-0.1.2.ebuild manifest
+ebuild lpkg-0.1.3.ebuild manifest
 ```
 
 Подробности — в разделе [«Установка через Portage»](#установка-через-portage-1).
@@ -142,6 +142,11 @@ lpkg history                    # журнал операций lpkg
 lpkg export -o snapshot.json    # снимок для инвентаризации
 ```
 
+Без `--check` команды `list`/`ls` и `info` не ходят в сеть: колонки
+«Последняя» и «Статус» заполняются из кэша последней проверки, а под таблицей
+указывается её время. Если проверки ещё не было, выводится подсказка
+запустить `--check`.
+
 ### Обновление
 
 ```bash
@@ -203,6 +208,12 @@ lpkg tui               # интерактивный интерфейс на dial
 - `pip list --user --outdated --format=json`;
 - `go list -m -json module@latest`;
 - `flatpak remote-ls --user --updates --json`.
+
+Результат проверки сохраняется в снапшоте (`latest`, `update_available` и
+время проверки), поэтому последующий `lpkg ls` показывает последнюю известную
+версию без сетевого запроса — с пометкой, когда она получена. Кэш применяется
+только к той же версии пакета или когда пакет обновился ровно до известной
+последней версии; после неизвестного изменения версии он отбрасывается.
 
 ### Сканер и `doctor`
 
@@ -363,7 +374,7 @@ src_install() {
 ## Разработка
 
 ```bash
-python -m unittest discover -s tests -v    # 78 тестов
+python -m unittest discover -s tests -v    # 85 тестов
 make check                                 # проверка синтаксиса
 make help                                  # список целей
 ```

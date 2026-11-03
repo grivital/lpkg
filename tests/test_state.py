@@ -1,10 +1,12 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 from lpkg.model import PackageRecord
 from lpkg.state import (
+    apply_cached_updates,
     apply_first_seen,
     diff_snapshot,
     load_snapshot,
@@ -23,6 +25,95 @@ class StateTests(unittest.TestCase):
     def tearDown(self):
         self.env.stop()
         self.tmp.cleanup()
+
+    def test_cache_is_applied_for_same_version(self):
+        snapshot = Snapshot(
+            checked_at=datetime(2026, 11, 3, 12, 0),
+            packages={
+                "uv:x": {
+                    "manager": "uv",
+                    "name": "x",
+                    "version": "1.0",
+                    "latest": "1.1",
+                    "update_available": True,
+                }
+            },
+        )
+        record = PackageRecord(manager="uv", name="x", version="1.0")
+        self.assertTrue(apply_cached_updates([record], snapshot))
+        self.assertEqual(record.latest, "1.1")
+        self.assertTrue(record.outdated)
+
+    def test_cache_marks_update_to_known_latest_as_current(self):
+        snapshot = Snapshot(
+            packages={
+                "uv:x": {
+                    "manager": "uv",
+                    "name": "x",
+                    "version": "1.0",
+                    "latest": "1.1",
+                    "update_available": True,
+                }
+            }
+        )
+        record = PackageRecord(manager="uv", name="x", version="1.1")
+        self.assertTrue(apply_cached_updates([record], snapshot))
+        self.assertEqual(record.latest, "1.1")
+        self.assertFalse(record.outdated)
+
+    def test_cache_is_not_applied_to_changed_version(self):
+        snapshot = Snapshot(
+            packages={
+                "uv:x": {
+                    "manager": "uv",
+                    "name": "x",
+                    "version": "1.0",
+                    "latest": "1.1",
+                    "update_available": True,
+                }
+            }
+        )
+        record = PackageRecord(manager="uv", name="x", version="2.0")
+        self.assertFalse(apply_cached_updates([record], snapshot))
+        self.assertIsNone(record.latest)
+
+    def test_save_preserves_cache_for_same_version(self):
+        checked = datetime(2026, 11, 3, 12, 0)
+        snapshot = Snapshot(
+            checked_at=checked,
+            packages={
+                "uv:x": {
+                    "manager": "uv",
+                    "name": "x",
+                    "version": "1.0",
+                    "latest": "1.1",
+                    "update_available": True,
+                }
+            },
+        )
+        saved = save_snapshot(
+            [PackageRecord(manager="uv", name="x", version="1.0")], snapshot
+        )
+        self.assertEqual(saved.packages["uv:x"]["latest"], "1.1")
+        self.assertEqual(saved.packages["uv:x"]["update_available"], True)
+        self.assertEqual(saved.checked_at, checked)
+
+    def test_save_drops_cache_for_unknown_version_change(self):
+        snapshot = Snapshot(
+            packages={
+                "uv:x": {
+                    "manager": "uv",
+                    "name": "x",
+                    "version": "1.0",
+                    "latest": "1.1",
+                    "update_available": True,
+                }
+            }
+        )
+        saved = save_snapshot(
+            [PackageRecord(manager="uv", name="x", version="2.0")], snapshot
+        )
+        self.assertIsNone(saved.packages["uv:x"]["latest"])
 
     def test_snapshot_roundtrip_and_first_seen(self):
         records = [

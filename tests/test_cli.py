@@ -2,6 +2,7 @@ import io
 import json
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
@@ -289,6 +290,51 @@ class EmptyOutdatedTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertIn("Нет пакетов для проверки", output)
         self.assertNotIn("Всё актуально", output)
+
+
+class ListCacheNoteTests(unittest.TestCase):
+    def run_list(self, result: ScanResult) -> str:
+        ctx: Any = SimpleNamespace(
+            args=SimpleNamespace(
+                check=False,
+                outdated=False,
+                manual=False,
+                all=False,
+                manager=None,
+                paths=False,
+                json=False,
+            ),
+            config=Config(include_manual=False),
+            style=Style("never"),
+            json=False,
+            collect=Mock(return_value=result),
+            save=Mock(),
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            cmd_list(ctx)
+        return output.getvalue()
+
+    def test_cached_note_is_shown(self):
+        record = PackageRecord(
+            manager="uv",
+            name="x",
+            version="1.0",
+            latest="1.1",
+            update_available=True,
+        )
+        result = ScanResult(
+            records=[record],
+            cache_used=True,
+            cache_checked_at=datetime(2026, 11, 3, 12, 0),
+        )
+        output = self.run_list(result)
+        self.assertIn("по последней проверке: 2026-11-03 12:00", output)
+
+    def test_missing_check_hint_is_shown(self):
+        record = PackageRecord(manager="uv", name="x", version="1.0")
+        output = self.run_list(ScanResult(records=[record]))
+        self.assertIn("Обновления не проверялись", output)
 
 
 class StateErrorVisibilityTests(unittest.TestCase):
